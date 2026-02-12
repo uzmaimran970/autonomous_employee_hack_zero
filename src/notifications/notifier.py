@@ -1,5 +1,5 @@
 """
-Abstract Notifier for Gold Tier Foundation.
+Abstract Notifier for Gold Tier Foundation + Platinum Intelligence Layer.
 
 Base class for all notification delivery mechanisms.
 """
@@ -9,6 +9,16 @@ from abc import ABC, abstractmethod
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+# Alert types (Gold + Platinum)
+ALERT_TYPES = {
+    # Gold
+    'status_change', 'execution_failure', 'sla_breach',
+    'credential_detected', 'rollback_triggered',
+    # Platinum
+    'predictive_sla_warning', 'self_healing_recovery',
+    'concurrency_limit_reached',
+}
 
 
 class Notifier(ABC):
@@ -26,7 +36,9 @@ class Notifier(ABC):
 
         Args:
             event: Dict with keys: task_name, old_status, new_status,
-                   timestamp, severity.
+                   timestamp, severity. Platinum adds: alert_type
+                   (predictive_sla_warning, self_healing_recovery,
+                   concurrency_limit_reached).
 
         Returns:
             True if sent successfully, False otherwise.

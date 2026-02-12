@@ -42,6 +42,13 @@ DASHBOARD_TEMPLATE = """# Dashboard
 - **SLA Compliance (24h)**: {sla_compliance}
 - **Throughput (24h)**: {throughput}
 
+## Platinum Intelligence
+
+- **Predictive SLA Alerts (24h)**: {sla_predictions}
+- **Self-Healing Recoveries (24h)**: {self_heal_count}
+- **Risk Score Distribution**: {risk_distribution}
+- **Learning Data Points**: {learning_points}
+
 ## Active Alerts
 
 {active_alerts}
@@ -350,6 +357,87 @@ class DashboardUpdater:
             return "- No active alerts"
         return '\n'.join(alerts)
 
+    def count_sla_predictions(self, hours: int = 24) -> str:
+        """Count predictive SLA alerts in the last N hours."""
+        if not self.ops_logger:
+            return "N/A"
+        recent = self.ops_logger.read_recent(200)
+        cutoff = datetime.now().timestamp() - (hours * 3600)
+        count = 0
+        for entry in recent:
+            if entry.get('op') == 'sla_prediction':
+                try:
+                    ts_str = entry.get('ts', '')
+                    ts = datetime.fromisoformat(
+                        ts_str.replace('.', ':', 2) if ts_str.count('.') > 1 else ts_str
+                    )
+                    if ts.timestamp() >= cutoff:
+                        count += 1
+                except (ValueError, TypeError):
+                    count += 1
+        return f"{count} alert(s)"
+
+    def count_self_heal_recoveries(self, hours: int = 24) -> str:
+        """Count successful self-healing recoveries in the last N hours."""
+        if not self.ops_logger:
+            return "N/A"
+        recent = self.ops_logger.read_recent(200)
+        cutoff = datetime.now().timestamp() - (hours * 3600)
+        healed = 0
+        attempted = 0
+        for entry in recent:
+            op = entry.get('op', '')
+            if op.startswith('self_heal_'):
+                try:
+                    ts_str = entry.get('ts', '')
+                    ts = datetime.fromisoformat(
+                        ts_str.replace('.', ':', 2) if ts_str.count('.') > 1 else ts_str
+                    )
+                    if ts.timestamp() >= cutoff:
+                        attempted += 1
+                        if entry.get('outcome') == 'success':
+                            healed += 1
+                except (ValueError, TypeError):
+                    attempted += 1
+        return f"{healed}/{attempted} successful"
+
+    def compute_risk_distribution(self) -> str:
+        """Compute risk score distribution from recent risk_scored events."""
+        if not self.ops_logger:
+            return "N/A"
+        recent = self.ops_logger.read_recent(200)
+        high = med = low = 0
+        for entry in recent:
+            if entry.get('op') == 'risk_scored':
+                detail = entry.get('detail', '')
+                try:
+                    for part in detail.split():
+                        if part.startswith('composite='):
+                            score = float(part.split('=')[1])
+                            if score > 0.7:
+                                high += 1
+                            elif score > 0.4:
+                                med += 1
+                            else:
+                                low += 1
+                            break
+                except (ValueError, IndexError):
+                    pass
+        return f"High:{high} Med:{med} Low:{low}"
+
+    def count_learning_points(self) -> str:
+        """Count total learning data points from Learning_Data folder."""
+        ld = self.vault_path / 'Learning_Data'
+        if not ld.exists():
+            return "0"
+        count = 0
+        for f in ld.glob('*.jsonl'):
+            try:
+                count += sum(1 for _ in f.read_text().strip().split('\n') if _.strip())
+            except Exception:
+                pass
+        return str(count)
+
     def get_watcher_status(self, file_watcher_running: bool = False,
                            gmail_configured: bool = False) -> str:
         """
@@ -396,6 +484,10 @@ class DashboardUpdater:
             rollback_count=self.count_rollback_incidents(),
             sla_compliance=self.compute_sla_compliance(),
             throughput=self.compute_throughput(),
+            sla_predictions=self.count_sla_predictions(),
+            self_heal_count=self.count_self_heal_recoveries(),
+            risk_distribution=self.compute_risk_distribution(),
+            learning_points=self.count_learning_points(),
             active_alerts=self.compute_active_alerts(),
             recent_errors=self.get_recent_errors(),
             watcher_status=self.get_watcher_status(

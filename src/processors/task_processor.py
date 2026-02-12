@@ -1,10 +1,13 @@
 """
-Task Processor for Gold Tier Foundation.
+Task Processor for Gold Tier Foundation + Platinum Intelligence Layer.
 
 Reads tasks from /Needs_Action and generates action plans using Claude.
 Plans are saved to /Plans with checkbox-formatted steps.
 Classifies tasks using 6-gate system, auto-executes simple/complex ones,
 integrates rollback, SLA tracking, and notifications.
+
+Platinum Tier adds: intelligent planning, self-healing, SLA prediction,
+risk-based prioritization, learning, and concurrency control.
 """
 
 import logging
@@ -51,7 +54,10 @@ class TaskProcessor:
     """
 
     def __init__(self, vault_path: Path, ops_logger=None,
-                 notifier=None, sla_tracker=None):
+                 notifier=None, sla_tracker=None,
+                 planning_engine=None, self_healing_engine=None,
+                 sla_predictor=None, risk_engine=None,
+                 learning_engine=None, concurrency_controller=None):
         """
         Initialize the TaskProcessor.
 
@@ -60,6 +66,12 @@ class TaskProcessor:
             ops_logger: Optional OperationsLogger for audit trail.
             notifier: Optional Notifier for status change notifications.
             sla_tracker: Optional SLATracker for compliance tracking.
+            planning_engine: Optional PlanningEngine (Platinum P1).
+            self_healing_engine: Optional SelfHealingEngine (Platinum P2).
+            sla_predictor: Optional SLAPredictor (Platinum P3).
+            risk_engine: Optional RiskEngine (Platinum P4).
+            learning_engine: Optional LearningEngine (Platinum P5).
+            concurrency_controller: Optional ConcurrencyController (Platinum P6).
         """
         self.vault_path = Path(vault_path)
         self.vault_manager = VaultManager(vault_path)
@@ -78,6 +90,15 @@ class TaskProcessor:
         )
         self._processed_tasks: set = set()
 
+        # Platinum Tier modules (all optional — Gold fallback when None)
+        self.planning_engine = planning_engine
+        self.self_healing_engine = self_healing_engine
+        self.sla_predictor = sla_predictor
+        self.risk_engine = risk_engine
+        self.learning_engine = learning_engine
+        self.concurrency_controller = concurrency_controller
+        self._config = config
+
     def read_pending_tasks(self) -> List[Path]:
         """
         Get list of pending tasks from /Needs_Action.
@@ -89,14 +110,54 @@ class TaskProcessor:
 
     def suggest_execution_sequence(self, pending_tasks: List[Path]) -> List[Path]:
         """
-        Suggest execution order: critical tasks first, then by creation time.
+        Suggest execution order: risk-based (Platinum) or priority-based (Gold).
+
+        Platinum: Uses RiskEngine composite score (SLA risk, complexity,
+        impact, historical failure rate) for dynamic ordering.
+        Gold fallback: Critical tasks first, then by creation time.
 
         Args:
             pending_tasks: List of task file paths.
 
         Returns:
-            Sorted list of task paths (critical first, then oldest first).
+            Sorted list of task paths.
         """
+        # Platinum: risk-based reordering
+        if (self.risk_engine and
+                self._config.get('enable_risk_scoring', False)):
+            try:
+                tasks_with_meta = []
+                for path in pending_tasks:
+                    meta = {}
+                    try:
+                        post = self.vault_manager.read_file(f"Needs_Action/{path.name}")
+                        if post:
+                            meta = dict(post.metadata)
+                    except Exception:
+                        pass
+                    tasks_with_meta.append((path.name, meta))
+
+                hist_map = {}
+                if self.learning_engine:
+                    for name, meta in tasks_with_meta:
+                        task_type = meta.get('task_type', 'general')
+                        metrics = self.learning_engine.query(task_type)
+                        if metrics:
+                            hist_map[name] = {
+                                'failure_rate': metrics.failure_rate,
+                            }
+
+                scored = self.risk_engine.reorder_tasks(
+                    tasks_with_meta, historical_data_map=hist_map
+                )
+                # Map back to Path objects preserving risk order
+                name_to_path = {p.name: p for p in pending_tasks}
+                return [name_to_path[name] for name, _ in scored
+                        if name in name_to_path]
+            except Exception as e:
+                logger.warning(f"Risk-based ordering failed, using Gold fallback: {e}")
+
+        # Gold fallback: priority-based ordering
         def sort_key(path: Path):
             priority_val = 2  # default normal
             created = float('inf')
@@ -108,7 +169,6 @@ class TaskProcessor:
                 created = path.stat().st_ctime
             except Exception:
                 pass
-            # Negate priority so higher priority comes first
             return (-priority_val, created)
 
         return sorted(pending_tasks, key=sort_key)
@@ -202,14 +262,57 @@ class TaskProcessor:
 
             if exec_result.get('success'):
                 self._update_task_status(task_path, 'done')
+                # Platinum: record success to learning engine
+                if self.learning_engine:
+                    try:
+                        self.learning_engine.record({
+                            'task_type': task_metadata.get('task_type', 'general') if task_metadata else 'general',
+                            'duration_ms': exec_result.get('duration_ms', 0),
+                            'outcome': 'success',
+                        })
+                    except Exception as le_err:
+                        logger.warning(f"Learning engine record failed: {le_err}")
             else:
-                # On failure, attempt rollback for complex tasks
-                if classification == 'complex' and snapshot_dir:
-                    task_file = self._find_task_file(task_path)
-                    if task_file:
-                        self.rollback_manager.restore_snapshot(snapshot_dir, task_file)
-                else:
-                    self._update_task_status(task_path, 'failed')
+                # Platinum: attempt self-healing before rollback
+                healed = False
+                if (self.self_healing_engine and
+                        self._config.get('enable_self_healing', False)):
+                    try:
+                        from intelligence.execution_graph import ExecutionStep
+                        failed_step = ExecutionStep(
+                            step_id="exec_0", name="execution",
+                            priority=1,
+                        )
+                        attempts = self.self_healing_engine.recover(
+                            task_path.name, failed_step,
+                            execute_fn=lambda s: self.executor.execute(
+                                task_path, steps_list
+                            ).get('success', False),
+                        )
+                        if any(a.outcome == 'success' for a in attempts):
+                            healed = True
+                            self._update_task_status(task_path, 'done')
+                    except Exception as sh_err:
+                        logger.warning(f"Self-healing failed: {sh_err}")
+
+                if not healed:
+                    # Record failure to learning engine
+                    if self.learning_engine:
+                        try:
+                            self.learning_engine.record({
+                                'task_type': task_metadata.get('task_type', 'general') if task_metadata else 'general',
+                                'duration_ms': exec_result.get('duration_ms', 0),
+                                'outcome': 'failed',
+                            })
+                        except Exception:
+                            pass
+                    # Gold: rollback for complex tasks
+                    if classification == 'complex' and snapshot_dir:
+                        task_file = self._find_task_file(task_path)
+                        if task_file:
+                            self.rollback_manager.restore_snapshot(snapshot_dir, task_file)
+                    else:
+                        self._update_task_status(task_path, 'failed')
 
             if self.ops_logger:
                 self.ops_logger.log(
@@ -371,7 +474,19 @@ class TaskProcessor:
         task_title = self._extract_title(post.content)
         task_content = post.content
 
-        # Generate plan using Claude
+        # Platinum: generate execution graph via PlanningEngine
+        execution_graph = None
+        if self.planning_engine:
+            try:
+                execution_graph = self.planning_engine.decompose(
+                    task_content, task_id=task_path.name
+                )
+                if execution_graph:
+                    self.planning_engine.save_graph(execution_graph, task_path.name)
+            except Exception as pe_err:
+                logger.warning(f"PlanningEngine failed, falling back to Gold: {pe_err}")
+
+        # Generate plan using Claude (Gold path)
         plan_steps = self.generate_plan(task_title, task_content)
         if not plan_steps:
             logger.error(f"Failed to generate plan for: {task_path.name}")
@@ -591,6 +706,46 @@ Output ONLY the action steps in checkbox format, nothing else:"""
             logger.error(f"Error linking task to plan: {e}")
             return False
 
+    def run_sla_predictions(self):
+        """Platinum P3: Run SLA predictions for all in-progress tasks."""
+        if (not self.sla_predictor or
+                not self._config.get('enable_predictive_sla', False)):
+            return
+
+        in_progress = self.vault_manager.get_in_progress_tasks()
+        for task_path in in_progress:
+            try:
+                post = self.vault_manager.read_file(f"In_Progress/{task_path.name}")
+                if not post:
+                    continue
+                meta = post.metadata
+                created = meta.get('created', '')
+                if not created:
+                    continue
+                started = datetime.fromisoformat(str(created))
+                elapsed = (datetime.now() - started).total_seconds() / 60.0
+                task_type = meta.get('task_type', 'general')
+                classification = meta.get('complexity', 'simple')
+                sla_key = 'sla_complex_minutes' if classification == 'complex' else 'sla_simple_minutes'
+                sla_threshold = self._config.get(sla_key, 10)
+
+                hist = None
+                if self.learning_engine:
+                    metrics = self.learning_engine.query(task_type)
+                    if metrics:
+                        hist = {
+                            'avg_duration_ms': metrics.avg_duration_ms,
+                            'duration_variance': metrics.duration_variance,
+                            'total_count': metrics.total_count,
+                        }
+
+                self.sla_predictor.predict(
+                    task_path.name, task_type, elapsed, sla_threshold,
+                    historical_data=hist,
+                )
+            except Exception as e:
+                logger.warning(f"SLA prediction failed for {task_path.name}: {e}")
+
     def process_all_pending(self) -> int:
         """
         Process all pending tasks that don't have plans.
@@ -599,6 +754,17 @@ Output ONLY the action steps in checkbox format, nothing else:"""
             Number of plans generated.
         """
         pending_tasks = self.read_pending_tasks()
+
+        # Platinum: reorder by risk score
+        pending_tasks = self.suggest_execution_sequence(pending_tasks)
+
+        # Platinum: run SLA predictions for in-progress tasks
+        self.run_sla_predictions()
+
+        # Platinum: check concurrency timeouts
+        if self.concurrency_controller:
+            self.concurrency_controller.check_timeouts()
+
         plans_generated = 0
 
         for task_path in pending_tasks:
@@ -613,10 +779,35 @@ Output ONLY the action steps in checkbox format, nothing else:"""
                 self._processed_tasks.add(task_path.name)
                 continue
 
-            # Process the task
-            plan_path = self.process_task(task_path)
-            if plan_path:
-                plans_generated += 1
-                self._processed_tasks.add(task_path.name)
+            # Platinum: concurrency control — acquire slot or queue
+            slot = None
+            if self.concurrency_controller:
+                slot = self.concurrency_controller.acquire(task_path.name)
+                if slot is None:
+                    # At capacity — queue task by risk score
+                    risk_score = 0.5  # default
+                    if self.risk_engine:
+                        try:
+                            meta = {}
+                            post = self.vault_manager.read_file(f"Needs_Action/{task_path.name}")
+                            if post:
+                                meta = dict(post.metadata)
+                            score = self.risk_engine.compute_score(task_path.name, meta)
+                            risk_score = score.composite_score
+                        except Exception:
+                            pass
+                    self.concurrency_controller.queue(task_path.name, risk_score)
+                    continue
+
+            try:
+                # Process the task
+                plan_path = self.process_task(task_path)
+                if plan_path:
+                    plans_generated += 1
+                    self._processed_tasks.add(task_path.name)
+            finally:
+                # Platinum: release concurrency slot
+                if slot and self.concurrency_controller:
+                    self.concurrency_controller.complete(slot.slot_id)
 
         return plans_generated

@@ -29,6 +29,10 @@ class OperationsLogger:
         'step_executed', 'sla_breach', 'rollback_triggered',
         'rollback_restored', 'gate_blocked', 'override_applied',
         'notification_sent', 'notification_failed', 'heartbeat_fail',
+        # Platinum Tier operations
+        'sla_prediction', 'risk_scored', 'self_heal_retry',
+        'self_heal_alternative', 'self_heal_partial', 'learning_update',
+        'priority_adjusted', 'concurrency_queued',
     }
     VALID_OUTCOMES = {'success', 'failed', 'flagged'}
 

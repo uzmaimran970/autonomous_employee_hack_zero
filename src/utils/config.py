@@ -58,6 +58,20 @@ def load_config(env_path: Optional[Path] = None) -> dict:
         'notification_endpoint': os.getenv('NOTIFICATION_ENDPOINT', ''),
         'rollback_retention_days': int(os.getenv('ROLLBACK_RETENTION_DAYS', '7')),
 
+        # Platinum Tier configuration
+        'prediction_threshold': float(os.getenv('PREDICTION_THRESHOLD', '0.7')),
+        'max_parallel_tasks': int(os.getenv('MAX_PARALLEL_TASKS', '3')),
+        'learning_window_days': int(os.getenv('LEARNING_WINDOW_DAYS', '30')),
+        'max_recovery_attempts': int(os.getenv('MAX_RECOVERY_ATTEMPTS', '3')),
+        'task_timeout_minutes': int(os.getenv('TASK_TIMEOUT_MINUTES', '15')),
+        'enable_predictive_sla': os.getenv('ENABLE_PREDICTIVE_SLA', 'true').lower() == 'true',
+        'enable_self_healing': os.getenv('ENABLE_SELF_HEALING', 'true').lower() == 'true',
+        'enable_risk_scoring': os.getenv('ENABLE_RISK_SCORING', 'true').lower() == 'true',
+        'risk_weight_sla': float(os.getenv('RISK_WEIGHT_SLA', '0.3')),
+        'risk_weight_complexity': float(os.getenv('RISK_WEIGHT_COMPLEXITY', '0.2')),
+        'risk_weight_impact': float(os.getenv('RISK_WEIGHT_IMPACT', '0.3')),
+        'risk_weight_failure': float(os.getenv('RISK_WEIGHT_FAILURE', '0.2')),
+
         # Gmail configuration (optional)
         'gmail_client_id': os.getenv('GMAIL_CLIENT_ID'),
         'gmail_client_secret': os.getenv('GMAIL_CLIENT_SECRET'),
