@@ -86,7 +86,7 @@ def create_folders(vault_path: Path) -> bool:
     Returns:
         True if successful, False otherwise.
     """
-    folders = ['Needs_Action', 'In_Progress', 'Done', 'Plans', 'Rollback_Archive']
+    folders = ['Needs_Action', 'In_Progress', 'Done', 'Plans', 'Rollback_Archive', 'Learning_Data']
 
     try:
         # Create vault root if it doesn't exist

@@ -144,9 +144,48 @@ def cmd_loop(args):
     else:
         notifier = NoOpNotifier()
 
+    # Platinum Tier: Intelligence Layer modules (all optional)
+    planning_engine = None
+    self_healing_engine = None
+    sla_predictor = None
+    risk_engine = None
+    learning_engine = None
+    concurrency_controller = None
+
+    try:
+        from intelligence.planning_engine import PlanningEngine
+        from intelligence.self_healing import SelfHealingEngine
+        from intelligence.sla_predictor import SLAPredictor
+        from intelligence.risk_engine import RiskEngine
+        from intelligence.learning_engine import LearningEngine
+        from intelligence.concurrency_controller import ConcurrencyController
+
+        learning_engine = LearningEngine(vault_path, config, ops_logger=ops_logger)
+        planning_engine = PlanningEngine(
+            vault_path, config, ops_logger=ops_logger,
+            learning_engine=learning_engine,
+        )
+        self_healing_engine = SelfHealingEngine(
+            config=config, rollback_manager=None, ops_logger=ops_logger,
+        )
+        sla_predictor = SLAPredictor(config=config, ops_logger=ops_logger)
+        risk_engine = RiskEngine(config=config, ops_logger=ops_logger)
+        concurrency_controller = ConcurrencyController(config=config, ops_logger=ops_logger)
+        logger.info("Platinum Intelligence Layer initialized")
+    except ImportError as e:
+        logger.info(f"Platinum modules not available, running Gold only: {e}")
+    except Exception as e:
+        logger.warning(f"Platinum initialization failed, running Gold only: {e}")
+
     processor = TaskProcessor(
         vault_path, ops_logger=ops_logger,
-        notifier=notifier, sla_tracker=sla_tracker
+        notifier=notifier, sla_tracker=sla_tracker,
+        planning_engine=planning_engine,
+        self_healing_engine=self_healing_engine,
+        sla_predictor=sla_predictor,
+        risk_engine=risk_engine,
+        learning_engine=learning_engine,
+        concurrency_controller=concurrency_controller,
     )
     task_mover = TaskMover(vault_manager, ops_logger)
     credential_scanner = CredentialScanner() if config.get('credential_scan_enabled', True) else None
@@ -161,11 +200,15 @@ def cmd_loop(args):
     signal.signal(signal.SIGTERM, signal_handler)
 
     in_progress_count = len(vault_manager.get_in_progress_tasks())
-    print("\n🤖 Starting Autonomous Employee (Gold Tier)")
+    tier = "Platinum" if planning_engine else "Gold"
+    print(f"\n🤖 Starting Autonomous Employee ({tier} Tier)")
     print(f"   Vault: {vault_path}")
     print(f"   Watch: {watch_dir}")
     print(f"   Interval: {interval}s")
     print(f"   In-Progress: {in_progress_count} task(s)")
+    if planning_engine:
+        print(f"   Intelligence: Planning, Self-Healing, SLA Prediction, Risk Scoring")
+        print(f"   Concurrency: max {config.get('max_parallel_tasks', 3)} parallel tasks")
     print("   Press Ctrl+C to stop\n")
 
     # Start watcher in non-blocking mode
